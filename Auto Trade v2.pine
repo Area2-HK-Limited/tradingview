@@ -1,0 +1,383 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © erictong514
+
+//@version=5
+
+
+//// Rob Hoffman - Overlay Set
+strategy("ET-Auto Trade v2", shorttitle = "ET-AT v2", overlay = true, max_labels_count = 500, initial_capital = 100000, commission_value = 0.05, process_orders_on_close = true, default_qty_type = strategy.fixed, default_qty_value = 100)
+
+a = ta.sma(close,3)
+b = ta.sma(close,5)
+
+c = ta.ema(close,18)
+d = ta.ema(close,20)
+
+e = ta.sma(close,50)
+f = ta.sma(close,89)
+g = ta.ema(close,144)
+h = ta.sma(close,200)
+
+k = ta.ema(close,35)
+r = ta.rma(ta.tr,35)
+ku = k + r*0.5
+kl = k - r*0.5
+
+//plot(a, title = "Fast Speed Line", linewidth = 2, color = #0000FF)
+plot(b, title = "Slow Speed Line", linewidth = 2, color = color.rgb(53, 50, 255, 50)) //Need
+plot(c, title = "Fast Primary Trend Line", linewidth = 2, color = #fffb0080) //Need
+//plot(d, title = "Slow Primary Trend Line", linewidth = 3, color = #000000)
+plot(e, title = "Trend Line - 1", linewidth = 1, color = color.rgb(255, 255, 255, 50)) //Need
+plot(f, title = "Trend Line - 2", linewidth = 1, color = color.rgb(255, 255, 255, 50)) //Need
+plot(g, title = "Trend Line - 3", linewidth = 2, color = color.rgb(255, 0, 255, 50)) //Need
+//plot(h, title = "Trend Line - 4", linewidth = 3, color = color.fuchsia)
+
+plot(k, title = "No Trend Zone - Midline", linewidth = 1, color = color.rgb(255, 255, 255, 50), style = plot.style_circles) //Need
+plot(ku, title = "No Trend Zone - Upperline", linewidth = 1, color = color.rgb(255, 255, 255, 50), style = plot.style_circles) //Need
+//plot(kl, title = "No Trend Zone - Lowerline", linewidth = 2, color = #3CB371)
+
+
+var string inputName = input("", title="名稱")
+
+
+//// UCS_Rob Hoffman_Inventory Retracement Bar
+z = input(47, title="IRP%") // Inventory Retracement Percentage
+
+// Candle Range
+aa = math.abs(high - low)
+// Candle Body
+bb = math.abs(close - open)
+// Percent to Decimal
+cc = z/100
+
+// Range Verification 
+rv = bb < cc*aa
+
+// Price Level for Retracement
+x = low + (cc * aa)
+y = high - (cc * aa)
+
+sl = rv == true and high > y and close < y and open < y 
+ss = rv == true and low < x and close > x and open > x 
+
+// Line Definition
+li = sl ? y : ss ? x : (x+y)/2
+
+// Plot Statement
+plotshape(sl, style=shape.triangleup, location=location.belowbar, color = color.green, title = "Long Bar")
+plotshape(ss, style=shape.triangledown, location=location.abovebar, color = color.red, title = "Short Bar")
+
+//plot(li, style = line, color = blue, title = "Inventory Bar Retracement Price Line")
+
+
+//// Display target
+inputLongDirectionOrderLimit = input(3, title="Long 訂單上限")
+inputShortDirectionOrderLimit = input(1, title="Short 訂單上限")
+inputLongLimitMultiple = input(3.5, title="Long 止賺倍數")
+inputShortLimitMultiple = input(2.9, title="Short 止賺倍數")
+inputLongMaxStopLoss = input(3, title="Long 最大止蝕 %")
+LongMaxStopLoss = inputLongMaxStopLoss / 100
+inputShortMaxStopLoss = input(2.4, title="Short 最大止蝕 %")
+ShortMaxStopLoss = inputShortMaxStopLoss / 100
+var direction = ""
+var int directionOrder = 0
+var float longDirectionOrderLimit = inputLongDirectionOrderLimit
+var float shortDirectionOrderLimit = inputShortDirectionOrderLimit
+
+var float stopLongLoss = na
+var float stopShortLoss = na
+//var orderStatus = 0
+
+// WunderTrade Webhook Key
+var string longEnter = input("", title="WT Long Enter")
+var string longExit = input("", title="WT Long Exit")
+var string shortEnter = input("", title="WT Short Enter")
+var string shortExit = input("", title="WT Short Exit")
+
+
+// LONG
+var float longEntryPrice = na
+var float longExitPrice = na
+var float longLimit = na
+
+var float calcLongStopLoss = na
+var float calcShortStopLoss = na
+
+var float lastLongEntryPrice = na
+
+var float LongEntryPrice_Close = na
+var float longTakeProfit = na
+var float longTakeProfit_percent = na
+var float longStopLoss_percent = na
+var float longRR = na
+
+// 滿足全部條件買入Long
+if b > c
+    if c > e
+        if c > f
+            if c > g
+                if c > k
+                    if c > ku
+                        if close > open // 陽蠋
+                            if close > b
+                                if sl // 有Long訊號
+                                    if strategy.position_size == 0 // 無單，防止疊單，完左前日張先可再落
+                                        calcLongStopLoss := (close - c) / close
+                                        if calcLongStopLoss < LongMaxStopLoss
+                                            stopLongLoss := c
+                                        else
+                                            stopLongLoss := close * (1 - LongMaxStopLoss)
+                                        if direction == "short"
+                                            directionOrder := 0
+                                        if directionOrder < longDirectionOrderLimit
+                                            LongEntryPrice_Close := close
+                                            longTakeProfit := LongEntryPrice_Close + ((LongEntryPrice_Close - stopLongLoss)*inputLongLimitMultiple)
+                                            longTakeProfit_percent := ((longTakeProfit / LongEntryPrice_Close) - 1) * 100
+                                            longStopLoss_percent := ((stopLongLoss / LongEntryPrice_Close) - 1) * 100
+                                            longRR := longTakeProfit_percent / longStopLoss_percent * -1
+
+                                            label.new(bar_index, high, text = "Long | Entry:"+str.tostring(math.round(LongEntryPrice_Close,0))+" | TP:"+str.tostring(math.round(longTakeProfit,0))+"("+str.tostring(math.round(longTakeProfit_percent,2))+"%) "+" | SL:"+str.tostring(math.round(stopLongLoss,0))+"("+str.tostring(math.round(longStopLoss_percent,2))+"%) "+" | RR:"+str.tostring(math.round(longRR,2)), color = color.rgb(0, 255, 38), textcolor = color.rgb(0, 0, 0), style=label.style_label_lower_right, size = size.tiny)
+                                            strategy.entry("Long", strategy.long, comment = longEnter)
+                                            directionOrder += 1
+                                            //label.new(bar_index+1, low, text = str.tostring(close, "Close:# ")+str.tostring(stopLongLoss, "Stop:#"), color = color.rgb(0, 255, 38), textcolor = color.rgb(0, 0, 0), style=label.style_label_upper_left)
+                                        direction := "long"
+
+longEntryPrice := strategy.opentrades.entry_price(strategy.opentrades - 1)
+longLimit := longEntryPrice + ((longEntryPrice - stopLongLoss)*inputLongLimitMultiple)
+strategy.exit("Long", stop = stopLongLoss, limit = longLimit, comment = longExit)
+
+if strategy.position_size == 0
+    lastLongEntryPrice := LongEntryPrice_Close
+    longExitPrice := strategy.closedtrades.exit_price(strategy.closedtrades -1)
+else
+    lastLongEntryPrice := LongEntryPrice_Close //strategy.opentrades.entry_price(strategy.opentrades - 1)
+    longExitPrice := na
+
+if direction == "long"
+    if b < k
+        if b < ku
+            directionOrder := 0
+    if strategy.closedtrades.exit_bar_index(strategy.closedtrades -1) == bar_index
+        if lastLongEntryPrice < longExitPrice
+            //winPrice = (longExitPrice - lastLongEntryPrice) / lastLongEntryPrice
+            winPrice = (longExitPrice / lastLongEntryPrice) -1
+            label.new(bar_index, high, text = "Long WIN: "+str.tostring(math.round(winPrice * 100,2))+"% | Entry: "+str.tostring(math.round(lastLongEntryPrice,0))+" | Exit: "+str.tostring(math.round(longExitPrice,0)), color = #0d00ff, textcolor = #fff700, style=label.style_label_lower_right, size = size.tiny)
+        else
+            //lossPrice = (lastLongEntryPrice - stopLongLoss) / lastLongEntryPrice
+            lossPrice = (longExitPrice / lastLongEntryPrice) -1
+            label.new(bar_index, high, text = "Long LOSS: "+str.tostring(math.round(lossPrice*100,2))+"% | Entry: "+str.tostring(math.round(lastLongEntryPrice,0))+" | SL: "+str.tostring(math.round(stopLongLoss,0))+" | Exit: "+str.tostring(math.round(longExitPrice,0)), color = color.rgb(255, 0, 0), textcolor = #fff700, style=label.style_label_lower_right, size = size.tiny)
+
+
+
+// SHORT
+var float shortEntryPrice = na
+var float shortExitPrice = na
+var float shortLimit = na
+
+var float lastShortEntryPrice = na
+
+var float ShortEntryPrice_Close = na
+var float shortTakeProfit = na
+var float shortTakeProfit_percent = na
+var float shortStopLoss_percent = na
+var float shortRR = na
+
+// 滿足全部條件買入Short
+if b < c
+    if c < e
+        if c < f
+            if c < g
+                if c < k
+                    if c < ku
+                        if close < open // 陰蠋
+                            if close < b
+                                if ss // 有Short訊號
+                                    if strategy.position_size == 0 // 無單，防止疊單，完左前日張先可再落
+                                        calcShortStopLoss := (c - close) / close
+                                        if calcShortStopLoss < ShortMaxStopLoss
+                                            stopShortLoss := c
+                                        else
+                                            stopShortLoss := close * (1 + ShortMaxStopLoss)
+                                        //stopShortLoss := c
+                                        if direction == "long"
+                                            directionOrder := 0
+                                        if directionOrder < shortDirectionOrderLimit
+                                            ShortEntryPrice_Close := close
+                                            shortTakeProfit := ShortEntryPrice_Close + ((ShortEntryPrice_Close - stopShortLoss)*inputShortLimitMultiple)
+                                            shortTakeProfit_percent := (1 - (shortTakeProfit / ShortEntryPrice_Close)) * 100
+                                            shortStopLoss_percent := (1 - (stopShortLoss / ShortEntryPrice_Close)) * 100
+                                            shortRR := shortTakeProfit_percent / shortStopLoss_percent * -1
+
+                                            label.new(bar_index, low, text = "Short | Entry:"+str.tostring(math.round(ShortEntryPrice_Close,0))+" | TP:"+str.tostring(math.round(shortTakeProfit,0))+"("+str.tostring(math.round(shortTakeProfit_percent,2))+"%) "+" | SL:"+str.tostring(math.round(stopShortLoss,0))+"("+str.tostring(math.round(shortStopLoss_percent,2))+"%) "+" | RR:"+str.tostring(math.round(shortRR,2)), color = #ff9500, textcolor = #000000, style=label.style_label_upper_right, size = size.tiny)
+                                            strategy.entry("Short", strategy.short, comment = shortEnter)
+                                            directionOrder += 1
+                                            //label.new(bar_index+1, high, text = str.tostring(close, "Close:# ") + str.tostring(stopShortLoss, "Stop:#"), color = #ff0000, textcolor = #ffffff, style=label.style_label_lower_left)
+                                        direction := "short"
+shortEntryPrice := strategy.opentrades.entry_price(strategy.opentrades - 1)
+shortLimit := shortEntryPrice - ((stopShortLoss - shortEntryPrice)*inputShortLimitMultiple)
+strategy.exit("Short", stop = stopShortLoss, limit = shortLimit, comment = shortExit)
+
+if strategy.position_size == 0
+    lastShortEntryPrice := ShortEntryPrice_Close
+    shortExitPrice := strategy.closedtrades.exit_price(strategy.closedtrades -1)
+else
+    lastShortEntryPrice := ShortEntryPrice_Close //strategy.opentrades.entry_price(strategy.opentrades - 1)
+    shortExitPrice := na
+
+if direction == "short"
+    if b > k
+        if b > ku
+            directionOrder := 0
+    if strategy.closedtrades.exit_bar_index(strategy.closedtrades -1) == bar_index
+        if lastShortEntryPrice > shortExitPrice
+            //winPrice = (lastShortEntryPrice - shortExitPrice) / lastShortEntryPrice
+            winPrice = 1 - (shortExitPrice / lastShortEntryPrice)
+            label.new(bar_index, high, text = "Short WIN: "+str.tostring(math.round(winPrice * 100,2))+"% | Entry: "+str.tostring(math.round(lastShortEntryPrice,0))+" | Exit: "+str.tostring(math.round(shortExitPrice,0)), color = #0d00ff, textcolor = #fff700, style=label.style_label_lower_right, size = size.tiny)
+        else
+            //lossPrice = (stopShortLoss - lastShortEntryPrice) / lastShortEntryPrice
+            lossPrice = 1 - (shortExitPrice / lastShortEntryPrice)
+            label.new(bar_index, high, text = "Short LOSS: "+str.tostring(math.round(lossPrice * 100,2))+"% | Entry: "+str.tostring(math.round(lastShortEntryPrice,0))+" | SL: "+str.tostring(math.round(stopShortLoss,0))+" | Exit: "+str.tostring(math.round(shortExitPrice,0)), color = color.rgb(255, 0, 0), textcolor = #fff700, style=label.style_label_lower_right, size = size.tiny)
+
+
+//// Console Log
+plot(shortEntryPrice, "shortEntryPrice", style = plot.style_stepline, color = #ff6767)
+plot(shortExitPrice, "shortExitPrice", style = plot.style_stepline, color = #ff6767)
+plot(stopShortLoss, "stopShortLoss", style = plot.style_stepline, color = #ff6767)
+plot(shortLimit, "shortLimit", style = plot.style_stepline, color = #ff6767)
+plot(longEntryPrice, "longEntryPrice", style = plot.style_stepline, color = #3eff48)
+plot(longExitPrice, "longExitPrice", style = plot.style_stepline, color = #3eff48)
+plot(stopLongLoss, "stopLongLoss", style = plot.style_stepline, color = #3eff48)
+plot(longLimit, "longLimit", style = plot.style_stepline, color = #3eff48)
+plot(directionOrder, "directionOrder", style = plot.style_stepline, color = #faffa400)
+plot(longDirectionOrderLimit, "longDirectionOrderLimit", style = plot.style_stepline, color = #faffa400)
+plot(shortDirectionOrderLimit, "shortDirectionOrderLimit", style = plot.style_stepline, color = #faffa400)
+
+plot(calcLongStopLoss, "calcLongStopLoss", style = plot.style_stepline, color = #faffa400)
+plot(calcShortStopLoss, "calcShortStopLoss", style = plot.style_stepline, color = #faffa400)
+
+plot(lastLongEntryPrice, "lastLongEntryPrice", style = plot.style_stepline, color = #3eff48)
+plot(lastShortEntryPrice, "lastShortEntryPrice", style = plot.style_stepline, color = #3eff48)
+
+
+
+
+
+
+
+// ➤ **新增開關來控制是否顯示條件狀態表格**
+bool showConditionTable = input.bool(true, title="顯示條件狀態表格")
+
+// 只有當 `showConditionTable` 為 `true` 時才創建表格
+var table conditionTable = na
+
+if showConditionTable
+    // 創建 **整合的條件表格** (右上角)
+    conditionTable := table.new(position = position.bottom_right, columns = 4, rows = 14, bgcolor=color.rgb(0, 0, 0, 80))
+
+    // 訂單上限變數
+    bool longOrderAvailable = directionOrder < longDirectionOrderLimit
+    bool shortOrderAvailable = directionOrder < shortDirectionOrderLimit
+
+    // 當前交易方向 (Long / Short / 無方向)
+    string currentDirection = direction == "long" ? "🔹 Long" : direction == "short" ? "🔻 Short" : "🔸 無方向"
+
+    // 定義 LONG 買入條件
+    bool longCond1 = b > c  
+    bool longCond2 = c > e  
+    bool longCond3 = c > f  
+    bool longCond4 = c > g  
+    bool longCond5 = c > k  
+    bool longCond6 = c > ku 
+    bool longCond7 = close > open  
+    bool longCond8 = close > b  
+    bool longCond9 = sl  
+    bool longCond10 = strategy.position_size == 0  
+    bool longCond11 = longOrderAvailable  // Long 訂單未達上限
+
+    // 定義 SHORT 賣出條件
+    bool shortCond1 = b < c  
+    bool shortCond2 = c < e  
+    bool shortCond3 = c < f  
+    bool shortCond4 = c < g  
+    bool shortCond5 = c < k  
+    bool shortCond6 = c < ku 
+    bool shortCond7 = close < open  
+    bool shortCond8 = close < b  
+    bool shortCond9 = ss  
+    bool shortCond10 = strategy.position_size == 0  
+    bool shortCond11 = shortOrderAvailable  // Short 訂單未達上限
+
+    // LONG 條件名稱
+    string[] longCondNames = array.new_string()
+    array.push(longCondNames, "SMA 5 > EMA 18")
+    array.push(longCondNames, "EMA 18 > SMA 50")
+    array.push(longCondNames, "EMA 18 > SMA 89")
+    array.push(longCondNames, "EMA 18 > EMA 144")
+    array.push(longCondNames, "EMA 18 > EMA 35")
+    array.push(longCondNames, "EMA 18 > 上界")
+    array.push(longCondNames, "陽蠋")
+    array.push(longCondNames, "收盤價 > SMA 5")
+    array.push(longCondNames, "多單訊號")
+    array.push(longCondNames, "防止疊單")
+    array.push(longCondNames, "Long訂單未達上限")
+
+    // SHORT 條件名稱
+    string[] shortCondNames = array.new_string()
+    array.push(shortCondNames, "SMA 5 < EMA 18")
+    array.push(shortCondNames, "EMA 18 < SMA 50")
+    array.push(shortCondNames, "EMA 18 < SMA 89")
+    array.push(shortCondNames, "EMA 18 < EMA 144")
+    array.push(shortCondNames, "EMA 18 < EMA 35")
+    array.push(shortCondNames, "EMA 18 < 上界")
+    array.push(shortCondNames, "陰蠋")
+    array.push(shortCondNames, "收盤價 < SMA 5")
+    array.push(shortCondNames, "空單訊號")
+    array.push(shortCondNames, "防止疊單")
+    array.push(shortCondNames, "Short訂單未達上限")
+
+    // LONG 條件陣列
+    bool[] longConditions = array.new_bool()
+    array.push(longConditions, longCond1)
+    array.push(longConditions, longCond2)
+    array.push(longConditions, longCond3)
+    array.push(longConditions, longCond4)
+    array.push(longConditions, longCond5)
+    array.push(longConditions, longCond6)
+    array.push(longConditions, longCond7)
+    array.push(longConditions, longCond8)
+    array.push(longConditions, longCond9)
+    array.push(longConditions, longCond10)
+    array.push(longConditions, longCond11)
+
+    // SHORT 條件陣列
+    bool[] shortConditions = array.new_bool()
+    array.push(shortConditions, shortCond1)
+    array.push(shortConditions, shortCond2)
+    array.push(shortConditions, shortCond3)
+    array.push(shortConditions, shortCond4)
+    array.push(shortConditions, shortCond5)
+    array.push(shortConditions, shortCond6)
+    array.push(shortConditions, shortCond7)
+    array.push(shortConditions, shortCond8)
+    array.push(shortConditions, shortCond9)
+    array.push(shortConditions, shortCond10)
+    array.push(shortConditions, shortCond11)
+
+    // ➤ **設定表格標題**
+    table.cell(conditionTable, column = 0, row = 0, text = "🔹 Long 條件", text_color=color.white, bgcolor=color.rgb(33, 149, 243, 80))
+    table.cell(conditionTable, column = 1, row = 0, text = "狀態", text_color=color.white, bgcolor=color.rgb(33, 149, 243, 80))
+    table.cell(conditionTable, column = 2, row = 0, text = "🔻 Short 條件", text_color=color.white, bgcolor=color.rgb(255, 82, 82, 80))
+    table.cell(conditionTable, column = 3, row = 0, text = "狀態", text_color=color.white, bgcolor=color.rgb(255, 82, 82, 80))
+
+    // ➤ **填充 Long & Short 條件**
+    for i = 0 to 10
+        table.cell(conditionTable, column = 0, row = i + 1, text = array.get(longCondNames, i), text_color=color.white, bgcolor=color.rgb(40, 40, 40, 80))
+        table.cell(conditionTable, column = 1, row = i + 1, text = array.get(longConditions, i) ? "✅" : "❌", text_color=color.white, bgcolor=array.get(longConditions, i) ? color.rgb(76, 175, 79, 80) : color.rgb(255, 82, 82, 80))
+        table.cell(conditionTable, column = 2, row = i + 1, text = array.get(shortCondNames, i), text_color=color.white, bgcolor=color.rgb(40, 40, 40, 80))
+        table.cell(conditionTable, column = 3, row = i + 1, text = array.get(shortConditions, i) ? "✅" : "❌", text_color=color.white, bgcolor=array.get(shortConditions, i) ? color.rgb(76, 175, 79, 80) : color.rgb(255, 82, 82, 80))
+
+    // ➤ **新增當前交易方向到表格**
+    table.cell(conditionTable, column = 0, row = 12, text = "📌 當前交易方向", text_color=color.yellow, bgcolor=color.rgb(40, 40, 40, 80))
+    table.cell(conditionTable, column = 1, row = 12, text = "", text_color=color.white, bgcolor=color.rgb(0, 100, 255, 80))
+    table.cell(conditionTable, column = 2, row = 12, text = currentDirection, text_color=color.white, bgcolor=color.rgb(0, 100, 255, 80))
+    table.cell(conditionTable, column = 3, row = 12, text = "", text_color=color.white, bgcolor=color.rgb(0, 100, 255, 80))
