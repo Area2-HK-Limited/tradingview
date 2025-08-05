@@ -9,10 +9,9 @@ stopLossPct    = input.float(3.0, "停損百分比 (%)", step=0.1)
 takeProfitPct  = input.float(6.0, "停利百分比 (%)", step=0.1)
 
 // 新增文字輸入欄位
-enterLongText  = input.string("Enter Long", "Enter Long 文字")
-exitLongText   = input.string("Exit Long", "Exit Long 文字")
-enterShortText = input.string("Enter Short", "Enter Short 文字")
-exitShortText  = input.string("Exit Short", "Exit Short 文字")
+enterLongKey  = input.string("ENTER-LONG_miS7M06is7DPHOE52xAoO3hlKwI=", "Enter Long") //ENTER-LONG_miS7M06is7DPHOE52xAoO3hlKwI=
+exitLongKey   = input.string("EXIT-LONG_miS7M06is7DPHOE52xAoO3hlKwI=", "Exit Long") //EXIT-LONG_miS7M06is7DPHOE52xAoO3hlKwI=
+// TradingView Msg: {{strategy.order.comment}}
 
 // 回測日期範圍
 fromDate       = input.time(defval=1577836800000, title="回測開始日期")  // 2020-01-01
@@ -51,8 +50,8 @@ var float profitLevel = na
 if isCupValid and isHandleValid and isBreakout and inDateRange
     stopLevel   := close * (1 - stopLossPct  / 100)
     profitLevel := close * (1 + takeProfitPct / 100)
-    strategy.entry("Long", strategy.long)
-    strategy.exit("Exit", from_entry="Long", stop=stopLevel, limit=profitLevel)
+    strategy.entry("Long", strategy.long, comment = enterLongKey)
+    strategy.exit("Exit", from_entry="Long", stop=stopLevel, limit=profitLevel, comment = exitLongKey)
 
 // 可視化繪製：
 // 1. 繪製杯頂、杯底、柄低線
@@ -72,9 +71,6 @@ if not na(handleLowIdx)
 plot(stopLevel,  title="停損水平", color=color.red,   style=plot.style_line, linewidth=1)
 plot(profitLevel,title="停利水平", color=color.green, style=plot.style_line, linewidth=1)
 
-// 顯示自訂文字範例
-if (isCupValid and isHandleValid and isBreakout and inDateRange)
-    label.new(bar_index, low, text=enterLongText, style=label.style_label_up, color=color.blue, textcolor=color.white)
 
 // NA 標示：當關鍵價格為 na 時，在圖表頂部顯示灰色 NA
 if na(cupBottomPrice)
