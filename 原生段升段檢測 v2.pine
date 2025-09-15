@@ -52,7 +52,7 @@ var bool upward_trend_ended = false
 var float bullish_start_open = na
 var float upward_end_close = na
 var float midpoint_price = na
-var float historical_high_100 = na
+var float historical_high_lookback = na
 var bool midpoint_check_passed = false
 
 // === 升段中位價計算變數 ===
@@ -88,11 +88,11 @@ var int step3_start_bar = na
 var bool process_active = false  // 控制整個流程是否在進行中
 
 // 全局計算歷史最高價（每根K線都計算）
-historical_high_100_current = ta.highest(high, 100)
 historical_high_lookback_current = ta.highest(high, lookback_bars)
+// 注意：歷史最高價檢查現在使用與第1步檢查相同的lookback_bars參數
 
-// 為了即時反映lookback_bars參數的變化，我們需要在每根K線上重新計算
-// 如果已經有儲存的原生段第1支K線位置，就重新計算其前lookback_bars支K線的最高價
+// 為了即時反映lookback_bars參數的變化，我們需要在每根K線上重新計算所有相關數值和判斷
+// 如果已經有儲存的原生段第1支K線位置，就重新計算其前lookback_bars支K線的最高價和相關判斷
 if not na(bullish_first_bar_index) and process_active
     // 重新計算原生段前lookback_bars支K線的最高價（即時反映參數變化）
     var float realtime_recalc_high = na
@@ -112,6 +112,16 @@ if not na(bullish_first_bar_index) and process_active
     
     // 即時更新顯示用的變數
     pre_bullish_high_lookback := realtime_recalc_high
+    
+    // 如果升段已經結束，重新計算第1步有效性判斷和中點價位檢查
+    if upward_trend_ended and not na(upward_segment_median)
+        // 重新計算第1步有效性檢查
+        step1_invalid := not na(realtime_recalc_high) and realtime_recalc_high > upward_segment_median
+        
+        // 即時重新計算中點價位檢查（使用最新的lookback_bars參數）
+        historical_high_lookback := historical_high_lookback_current
+        if not na(midpoint_price) and not na(historical_high_lookback)
+            midpoint_check_passed := historical_high_lookback > midpoint_price
 
 // 檢測連續陽燭
 if is_bullish_candle()
@@ -220,11 +230,11 @@ if upward_trend_active and not upward_trend_ended
         var float price_range = upward_end_close - bullish_start_open
         midpoint_price := bullish_start_open + (price_range * midpoint_percentage / 100.0)  // 可調整的中點價位
         
-        // 使用全局計算的歷史最高價
-        historical_high_100 := historical_high_100_current
+        // 使用全局計算的歷史最高價（現在跟隨lookback_bars參數）
+        historical_high_lookback := historical_high_lookback_current
         
         // 檢查歷史最高價是否高於中點價位
-        midpoint_check_passed := not na(historical_high_100) and not na(midpoint_price) and historical_high_100 > midpoint_price
+        midpoint_check_passed := not na(historical_high_lookback) and not na(midpoint_price) and historical_high_lookback > midpoint_price
         
         // === 第2步初始化 ===
         // 計算升段幅度（升段結束收市價 - 原生段開始開市價）
@@ -257,7 +267,7 @@ if upward_trend_active and not upward_trend_ended
             
             if midpoint_check_passed
                 label_text := label_text + " ✓"
-            else if not na(midpoint_price) and not na(historical_high_100)
+            else if not na(midpoint_price) and not na(historical_high_lookback)
                 label_text := label_text + " ✗"
                 
             label.new(x=bar_index, y=high, text=label_text, style=label.style_label_lower_right, color=label_color_upward, textcolor=color.white, size=size.small)
@@ -518,7 +528,7 @@ if barstate.islast
     
     // 中點價位檢查顯示
     var string midpoint_status = ""
-    if not na(midpoint_price) and not na(historical_high_100)
+    if not na(midpoint_price) and not na(historical_high_lookback)
         midpoint_status := (midpoint_check_passed ? "✓ 通過" : "✗ 未通過") + " (" + str.tostring(midpoint_percentage, "#") + "%)"
     else
         midpoint_status := "待檢查 (" + str.tostring(midpoint_percentage, "#") + "%)"
