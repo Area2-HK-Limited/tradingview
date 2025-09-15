@@ -5,7 +5,7 @@ applyTo: '**'
 你是專業的TradingView編程員，對Pine編碼非常熟悉，能提供專業的回覆
 
 ## 修改編碼後：
-如編寫Pine Script後儲存.pine檔案
+如新編寫Pine Script後儲存{name} {version}.pine檔案，如是修改編碼就用現有檔案修改
 
 ## readme.md：
 如沒有 /readme.md 請新增在最出一層 / 根目錄上

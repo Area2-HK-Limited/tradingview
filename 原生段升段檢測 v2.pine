@@ -1,0 +1,491 @@
+//@version=5
+strategy("ET-Up Trend", overlay=true, max_labels_count=450, max_lines_count=450, default_qty_type=strategy.percent_of_equity, default_qty_value=10, initial_capital=100000, currency=currency.USD)
+
+// === 設定參數 ===
+// 交易設定
+enable_trading = input.bool(true, "啟用自動交易", group="交易設定")
+entry_method = input.string("原生段完成", "進場方式", options=["原生段完成", "升段確認"], group="交易設定")
+exit_method = input.string("升段結束", "出場方式", options=["升段結束", "固定止損止盈"], group="交易設定")
+stop_loss_pct = input.float(5.0, "止損百分比 (%)", minval=0.1, maxval=20.0, step=0.1, group="交易設定")
+take_profit_pct = input.float(10.0, "止盈百分比 (%)", minval=0.1, maxval=50.0, step=0.1, group="交易設定")
+
+// 檢查參數設定
+midpoint_percentage = input.float(50.0, "中點價位百分比 (%)", minval=1.0, maxval=99.0, step=1.0, group="檢查參數")
+lookback_bars = input.int(50, "歷史K線數量", minval=1, maxval=200, step=1, group="檢查參數")
+
+// 顯示設定
+show_bullish_sequence = input.bool(true, "顯示原生段", group="顯示設定")
+show_upward_trend = input.bool(true, "顯示升段", group="顯示設定")
+label_color_bullish = input.color(color.green, "原生段標籤顏色", group="顏色設定")
+label_color_upward = input.color(color.blue, "升段標籤顏色", group="顏色設定")
+line_color_upward = input.color(color.blue, "升段連線顏色", group="顏色設定")
+
+// === 判斷陽燭的函數 ===
+is_bullish_candle() =>
+    close > open
+
+// === 原生段檢測：連續3支陽燭 ===
+var bool bullish_sequence_active = false
+var int bullish_sequence_start = na
+var int bullish_sequence_count = 0
+
+// === 交易狀態變數 ===
+var float entry_price = na
+var bool position_open = false
+var string entry_signal = na
+
+// === 升段檢測 ===
+var bool upward_trend_active = false
+var int upward_trend_start = na
+var float last_high = na
+var float last_low = na
+var int last_candle_index = na
+var bool upward_trend_ended = false
+
+// === 中點價位檢查變數 ===
+var float bullish_start_open = na
+var float upward_end_close = na
+var float midpoint_price = na
+var float historical_high_100 = na
+var bool midpoint_check_passed = false
+
+// === 升段中位價計算變數 ===
+var float upward_segment_median = na
+var int upward_segment_start_bar = na
+var float upward_segment_start_price = na
+var int upward_segment_end_bar = na
+var float upward_segment_end_price = na
+
+// === 第1步有效性檢查變數 ===
+var float pre_bullish_high_50 = na
+var bool step1_invalid = false
+
+// === 第2步計算變數 ===
+var bool step2_active = false
+var float upward_end_close_price = na
+var float step2_lowest_price = na
+var int step2_lowest_bar = na
+var float step2_take_profit_target = na
+var float upward_segment_range = na
+var bool step2_breakout_confirmed = false
+var float last_step2_profit_target = na  // 保存最後一次第2步的獲利目標供顯示用
+
+// 全局計算歷史最高價（每根K線都計算）
+historical_high_100_current = ta.highest(high, 100)
+historical_high_lookback_current = ta.highest(high, lookback_bars)
+
+// 檢測連續陽燭
+if is_bullish_candle()
+    if bullish_sequence_count == 0
+        bullish_sequence_start := bar_index
+        bullish_sequence_count := 1
+    else
+        bullish_sequence_count += 1
+else
+    // 如果當前燭不是陽燭，重置計數
+    if bullish_sequence_count > 0 and bullish_sequence_count < 3
+        bullish_sequence_count := 0
+        bullish_sequence_start := na
+
+// 當連續3支陽燭完成時，標記原生段
+var bool new_bullish_sequence = false
+if bullish_sequence_count == 3 and not bullish_sequence_active
+    bullish_sequence_active := true
+    new_bullish_sequence := true
+    
+    // 重置第2步狀態（開始新的升段分析）
+    last_step2_profit_target := na
+    
+    // 記錄原生段開始K線的開市價
+    bullish_start_open := open[2]  // 原生段第一支K線的開市價
+    
+    // 記錄升段開始位置和價位
+    upward_segment_start_bar := bullish_sequence_start
+    upward_segment_start_price := bullish_start_open  // 記錄升段開始價位（原生段第一支陽燭開市價）
+    
+    // 儲存原生段開始前N支K線的最高價（用於第1步有效性檢查）
+    // 重要：每個原生段都要重新計算前N支K線的最高價
+    // 例如：如果原生段第1支是第8支K線，我們要找第7支往前推N支的最高價
+    
+    // 計算從原生段第1支K線的前1支K線開始往前推N支K線
+    var int start_offset = bar_index - bullish_sequence_start + 1  // 從原生段第1支前1支開始
+    var float temp_high = na
+    
+    // 重置並開始計算
+    temp_high := na
+    var int valid_bars = 0
+    
+    // 從原生段第1支的前1支K線開始，往前找N支K線的最高價
+    for i = start_offset to (start_offset + lookback_bars - 1)
+        if i <= bar_index and i > 0  // 確保不超出歷史數據範圍
+            if na(temp_high)
+                temp_high := high[i]
+            else
+                temp_high := math.max(temp_high, high[i])
+            valid_bars += 1
+    
+    pre_bullish_high_50 := temp_high
+    
+    // 顯示原生段標籤
+    if show_bullish_sequence
+        label.new(x=bullish_sequence_start, y=high[2], text="原生段", style=label.style_label_lower_right, color=label_color_bullish, textcolor=color.white, size=size.small)
+    
+    // 交易邏輯：原生段完成時進場
+    if enable_trading and entry_method == "原生段完成" and not position_open
+        strategy.entry("多頭", strategy.long, comment="原生段進場")
+        position_open := true
+        entry_price := close
+        entry_signal := "原生段完成"
+
+// 當原生段完成後，開始監控升段
+if new_bullish_sequence
+    upward_trend_active := true
+    upward_trend_start := bar_index
+    last_high := high
+    last_low := low
+    last_candle_index := bar_index
+    upward_trend_ended := false
+    new_bullish_sequence := false
+
+// 升段條件檢查
+if upward_trend_active and not upward_trend_ended
+    var float current_high = na
+    var float current_low = na
+    current_high := high
+    current_low := low
+    
+    // 檢查是否符合升段條件：高點高過前一支高點，低點高過前一支低點
+    if current_high > last_high and current_low > last_low
+        // 符合升段條件，更新參考點
+        last_high := current_high
+        last_low := current_low
+        last_candle_index := bar_index
+        
+        // 交易邏輯：升段確認時進場
+        if enable_trading and entry_method == "升段確認" and not position_open
+            strategy.entry("多頭", strategy.long, comment="升段確認進場")
+            position_open := true
+            entry_price := close
+            entry_signal := "升段確認"
+            
+    else if current_high < last_high and current_low < last_low and not is_bullish_candle()
+        // 升段結束條件：高點低過前一支高點 和 低點低過前一支低點 和 當前K線是陰燭
+        upward_trend_ended := true
+        
+        // 記錄升段結束位置和價位
+        upward_segment_end_bar := bar_index
+        upward_segment_end_price := close[1]  // 升段結束前1支K線的收市價
+        
+        // 計算升段中位價：(原生段開始的開市價 + 升段結束前1支K線的收市價) / 2
+        if not na(bullish_start_open) and not na(upward_segment_end_price)
+            upward_segment_median := (bullish_start_open + upward_segment_end_price) / 2
+        
+        // 第1步有效性檢查：檢查原生段開始前50支K線的最高價
+        if not na(upward_segment_start_bar) and not na(upward_segment_median)
+            // 使用在原生段成立時已儲存的前50支K線最高價
+            // 檢查前50支K線最高價是否高於升段中位價
+            step1_invalid := not na(pre_bullish_high_50) and pre_bullish_high_50 > upward_segment_median
+        
+        // 計算中點價位檢查（使用可調整的百分比）
+        upward_end_close := close[1]  // 升段結束前1支K線的收市價
+        var float price_range = upward_end_close - bullish_start_open
+        midpoint_price := bullish_start_open + (price_range * midpoint_percentage / 100.0)  // 可調整的中點價位
+        
+        // 使用全局計算的歷史最高價
+        historical_high_100 := historical_high_100_current
+        
+        // 檢查歷史最高價是否高於中點價位
+        midpoint_check_passed := not na(historical_high_100) and not na(midpoint_price) and historical_high_100 > midpoint_price
+        
+        // === 第2步初始化 ===
+        // 計算升段幅度（升段結束收市價 - 原生段開始開市價）
+        if not na(bullish_start_open) and not na(upward_segment_end_price)
+            upward_segment_range := upward_segment_end_price - bullish_start_open
+        
+        // 開始第2步監控
+        step2_active := true
+        upward_end_close_price := close[1]  // 升段結束收市價
+        step2_lowest_price := low  // 初始化為當前K線最低價
+        step2_lowest_bar := na
+        step2_take_profit_target := na
+        step2_breakout_confirmed := false
+        
+        // 顯示升段結束標籤和連線
+        if show_upward_trend
+            var string label_text = "第1步"
+            if not na(upward_segment_median) and not na(upward_segment_start_price) and not na(upward_segment_end_price)
+                label_text := "第1步原生段及升段\n結束 (陰燭確認)\n中位價: " + str.tostring(upward_segment_median, "#.##") + 
+                             "\n開始開市: " + str.tostring(upward_segment_start_price, "#.##") +
+                             "\n結束收市: " + str.tostring(upward_segment_end_price, "#.##")
+            
+            // 添加第1步有效性檢查結果
+            if not na(pre_bullish_high_50) and not na(upward_segment_median)
+                label_text := label_text + "\n原生段前" + str.tostring(lookback_bars) + "K最高: " + str.tostring(pre_bullish_high_50, "#.##")
+                if step1_invalid
+                    label_text := label_text + " (無效)"
+                else
+                    label_text := label_text + " (有效)"
+            
+            if midpoint_check_passed
+                label_text := label_text + " ✓"
+            else if not na(midpoint_price) and not na(historical_high_100)
+                label_text := label_text + " ✗"
+                
+            label.new(x=bar_index, y=high, text=label_text, style=label.style_label_lower_right, color=label_color_upward, textcolor=color.white, size=size.small)
+            
+            // 畫升段連線
+            if not na(upward_trend_start) and not na(last_candle_index)
+                line.new(x1=upward_trend_start, y1=low[bar_index - upward_trend_start], x2=last_candle_index, y2=last_high, color=line_color_upward, width=2, style=line.style_dashed)
+        
+        // 交易邏輯：升段結束時出場
+        if enable_trading and exit_method == "升段結束" and position_open
+            strategy.close("多頭", comment="升段結束出場")
+            position_open := false
+            entry_price := na
+            entry_signal := na
+        
+        // 重置狀態，準備尋找下一個原生段
+        bullish_sequence_active := false
+        upward_trend_active := false
+        bullish_sequence_count := 0
+
+// === 固定止損止盈邏輯 ===
+if enable_trading and exit_method == "固定止損止盈" and position_open and not na(entry_price)
+    var float stop_loss_price = na
+    var float take_profit_price = na
+    stop_loss_price := entry_price * (1 - stop_loss_pct / 100)
+    take_profit_price := entry_price * (1 + take_profit_pct / 100)
+    strategy.exit("止損止盈", "多頭", stop=stop_loss_price, limit=take_profit_price, comment="止損止盈出場")
+
+// === 重置邏輯 ===
+// 如果在尋找升段過程中出現陰燭打破連續性，重置原生段狀態
+if bullish_sequence_active and not upward_trend_active and not is_bullish_candle()
+    bullish_sequence_active := false
+    bullish_sequence_count := 0
+
+// === 第2步監控邏輯 ===
+// 監控升段結束後的價格突破（只有在升段真正結束後才能進行）
+if step2_active and upward_trend_ended and not upward_trend_active
+    // 更新第2步期間的最低價
+    if low < step2_lowest_price
+        step2_lowest_price := low
+    
+    // 每支K線完結時檢查RR比率（使用升段收市價作為買入點）
+    float current_entry_price = upward_end_close_price  // 買入點：升段收市價
+    float current_stop_loss = step2_lowest_price  // 止蝕位：期間最低價
+    float current_take_profit = current_stop_loss + upward_segment_range  // 止賺位：最低價 + 升段幅度
+    float current_risk = current_entry_price - current_stop_loss  // 風險金額
+    float current_reward = current_take_profit - current_entry_price  // 回報金額
+    float current_rr_ratio = current_risk > 0 ? current_reward / current_risk : 0  // 當前RR比率
+    
+    // 如果RR比率低於1.5，結束第2步監控
+    if current_rr_ratio < 1.5
+        // 標記RR不足結束點
+        label.new(x=bar_index, y=low, text="第2步結束\nRR不足: " + str.tostring(current_rr_ratio, "#.##") + "\n買入點: " + str.tostring(current_entry_price, "#.##") + 
+                 "\n最低價: " + str.tostring(current_stop_loss, "#.##") + 
+                 "\n獲利目標: " + str.tostring(current_take_profit, "#.##") + 
+                 "\n風險: " + str.tostring(current_risk, "#.##") + 
+                 "\n回報: " + str.tostring(current_reward, "#.##"), 
+                  style=label.style_label_upper_right, color=color.red, textcolor=color.white, size=size.small)
+        
+        // 第2步因RR不足而結束，重置監控狀態
+        step2_active := false
+        upward_end_close_price := na
+        step2_lowest_price := na
+        step2_take_profit_target := na
+        upward_segment_range := na
+    
+    // 如果RR比率足夠，檢查是否突破升段結束價格（使用收市價判斷）
+    else if close > upward_end_close_price
+        // 計算1:1獲利目標：最低點 + 升段幅度
+        // 升段幅度 = 升段結束前1支K線的收市價 - 原生段第1支K線的開市價
+        // 直接使用已計算好的 upward_segment_range
+        step2_take_profit_target := step2_lowest_price + upward_segment_range
+        last_step2_profit_target := step2_take_profit_target  // 保存獲利目標供顯示用
+        
+        // 計算風險回報比率 (RR)
+        float entry_price_rr = close  // 買入點：突破升段收市價的K線收市價
+        float stop_loss_rr = step2_lowest_price  // 止蝕位：最低價
+        float take_profit_rr = step2_take_profit_target  // 止賺位：獲利目標
+        float risk_amount = entry_price_rr - stop_loss_rr  // 風險金額
+        float reward_amount = take_profit_rr - entry_price_rr  // 回報金額
+        float risk_reward_ratio = risk_amount > 0 ? reward_amount / risk_amount : 0  // RR比率
+        
+        // 檢查突破時的RR比率是否足夠
+        if risk_reward_ratio < 1.5
+            // 突破時RR不足，標記結束點
+            label.new(x=bar_index, y=high, text="第2步突破但RR不足\n結束流程\n原生段開市: " + str.tostring(bullish_start_open, "#.##") + 
+                     "\n升段收市: " + str.tostring(upward_segment_end_price, "#.##") + 
+                     "\n升段幅度: " + str.tostring(upward_segment_range, "#.##") + 
+                     "\n最低價: " + str.tostring(step2_lowest_price, "#.##") + 
+                     "\n獲利目標: " + str.tostring(step2_take_profit_target, "#.##") + 
+                     "\n買入點: " + str.tostring(entry_price_rr, "#.##") + 
+                     "\n風險: " + str.tostring(risk_amount, "#.##") + 
+                     "\n回報: " + str.tostring(reward_amount, "#.##") + 
+                     "\nRR比率: " + str.tostring(risk_reward_ratio, "#.##") + " (不足)", 
+                      style=label.style_label_lower_right, color=color.red, textcolor=color.white, size=size.small)
+        else
+            // RR比率足夠，標記成功突破點
+            label.new(x=bar_index, y=high, text="第2步突破\n原生段開市: " + str.tostring(bullish_start_open, "#.##") + 
+                     "\n升段收市: " + str.tostring(upward_segment_end_price, "#.##") + 
+                     "\n升段幅度: " + str.tostring(upward_segment_range, "#.##") + 
+                     "\n最低價: " + str.tostring(step2_lowest_price, "#.##") + 
+                     "\n獲利目標: " + str.tostring(step2_take_profit_target, "#.##") + 
+                     "\n買入點: " + str.tostring(entry_price_rr, "#.##") + 
+                     "\n風險: " + str.tostring(risk_amount, "#.##") + 
+                     "\n回報: " + str.tostring(reward_amount, "#.##") + 
+                     "\nRR比率: " + str.tostring(risk_reward_ratio, "#.##"), 
+                      style=label.style_label_lower_right, color=color.purple, textcolor=color.white, size=size.small)
+            
+            // 畫線從最低點到獲利目標
+            line.new(x1=bar_index, y1=step2_lowest_price, x2=bar_index, y2=step2_take_profit_target, 
+                     color=color.purple, width=2, style=line.style_solid)
+        
+        // 第2步完成（無論RR是否足夠），重置監控狀態
+        step2_active := false
+        upward_end_close_price := na
+        step2_lowest_price := na
+        step2_take_profit_target := na
+        upward_segment_range := na
+
+// === 背景顏色提示 ===
+var color bgcolor_color = na
+bgcolor_color := na
+if bullish_sequence_count == 1
+    bgcolor_color := color.new(color.yellow, 90)
+else if bullish_sequence_count == 2
+    bgcolor_color := color.new(color.orange, 90)
+else if bullish_sequence_active
+    bgcolor_color := color.new(color.green, 95)
+else if upward_trend_active
+    bgcolor_color := color.new(color.blue, 95)
+
+bgcolor(bgcolor_color)
+
+// === 資訊顯示 ===
+var table info_table = table.new(position.top_right, 2, 14, bgcolor=color.white, border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "狀態", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, "說明", text_color=color.black, bgcolor=color.gray)
+    
+    table.cell(info_table, 0, 1, "黃色背景", text_color=color.black)
+    table.cell(info_table, 1, 1, "第1支陽燭", text_color=color.black)
+    
+    table.cell(info_table, 0, 2, "橙色背景", text_color=color.black)
+    table.cell(info_table, 1, 2, "第2支陽燭", text_color=color.black)
+    
+    table.cell(info_table, 0, 3, "綠色背景", text_color=color.black)
+    table.cell(info_table, 1, 3, "原生段成立", text_color=color.black)
+    
+    table.cell(info_table, 0, 4, "藍色背景", text_color=color.black)
+    table.cell(info_table, 1, 4, "升段進行中 (需陰燭結束)", text_color=color.black)
+    
+    // 交易狀態顯示
+    var string position_status = ""
+    var string current_signal = ""
+    position_status := position_open ? "持倉中" : "無持倉"
+    table.cell(info_table, 0, 5, "交易狀態", text_color=color.black)
+    table.cell(info_table, 1, 5, position_status, text_color=position_open ? color.green : color.red)
+    
+    current_signal := na(entry_signal) ? "等待信號" : entry_signal
+    table.cell(info_table, 0, 6, "進場信號", text_color=color.black)
+    table.cell(info_table, 1, 6, current_signal, text_color=color.black)
+    
+    // 中點價位檢查顯示
+    var string midpoint_status = ""
+    if not na(midpoint_price) and not na(historical_high_100)
+        midpoint_status := (midpoint_check_passed ? "✓ 通過" : "✗ 未通過") + " (" + str.tostring(midpoint_percentage, "#") + "%)"
+    else
+        midpoint_status := "待檢查 (" + str.tostring(midpoint_percentage, "#") + "%)"
+    table.cell(info_table, 0, 7, "中點檢查", text_color=color.black)
+    table.cell(info_table, 1, 7, midpoint_status, text_color=midpoint_check_passed ? color.green : color.red)
+    
+    // 升段中位價顯示
+    var string median_price_text = ""
+    if not na(upward_segment_median)
+        median_price_text := str.tostring(upward_segment_median, "#.##")
+    else
+        median_price_text := "未計算"
+    table.cell(info_table, 0, 8, "升段中位價", text_color=color.black)
+    table.cell(info_table, 1, 8, median_price_text, text_color=color.black)
+    
+    // 升段開始位置顯示
+    var string start_position_text = ""
+    if not na(upward_segment_start_bar) and not na(upward_segment_start_price)
+        start_position_text := str.tostring(upward_segment_start_bar) + "@" + str.tostring(upward_segment_start_price, "#.##")
+    else
+        start_position_text := "未記錄"
+    table.cell(info_table, 0, 9, "開始開市價", text_color=color.black)
+    table.cell(info_table, 1, 9, start_position_text, text_color=color.black)
+    
+    // 第1步有效性檢查顯示
+    var string step1_status = ""
+    if not na(pre_bullish_high_50) and not na(upward_segment_median)
+        if step1_invalid
+            step1_status := "無效 (前" + str.tostring(lookback_bars) + "K: " + str.tostring(pre_bullish_high_50, "#.##") + ")"
+        else
+            step1_status := "有效 (前" + str.tostring(lookback_bars) + "K: " + str.tostring(pre_bullish_high_50, "#.##") + ")"
+    else
+        step1_status := "未檢查 (前" + str.tostring(lookback_bars) + "K)"
+    table.cell(info_table, 0, 10, "第1步檢查", text_color=color.black)
+    table.cell(info_table, 1, 10, step1_status, text_color=step1_invalid ? color.red : color.green)
+    
+    // 升段結束位置顯示
+    var string end_position_text = ""
+    if not na(upward_segment_end_bar) and not na(upward_segment_end_price)
+        end_position_text := str.tostring(upward_segment_end_bar) + "@" + str.tostring(upward_segment_end_price, "#.##")
+    else
+        end_position_text := "未記錄"
+    table.cell(info_table, 0, 11, "結束收市價", text_color=color.black)
+    table.cell(info_table, 1, 11, end_position_text, text_color=color.black)
+    
+    // 第2步監控狀態顯示
+    var string step2_status = ""
+    if step2_active and upward_trend_ended and not upward_trend_active
+        step2_status := "監控中 (目標: " + str.tostring(upward_end_close_price, "#.##") + ")"
+    else if step2_active and not upward_trend_ended
+        step2_status := "等待升段結束"
+    else if not na(last_step2_profit_target)
+        step2_status := "已突破 (獲利: " + str.tostring(last_step2_profit_target, "#.##") + ")"
+    else
+        step2_status := "未啟動"
+    table.cell(info_table, 0, 12, "第2步狀態", text_color=color.black)
+    table.cell(info_table, 1, 12, step2_status, text_color=(step2_active and upward_trend_ended and not upward_trend_active) ? color.orange : color.gray)
+    
+    // 當前RR比率顯示（只在第2步監控中顯示）
+    var string current_rr_status = ""
+    if step2_active and upward_trend_ended and not upward_trend_active and not na(upward_end_close_price) and not na(step2_lowest_price) and not na(upward_segment_range)
+        var float display_entry = upward_end_close_price
+        var float display_stop = step2_lowest_price
+        var float display_target = display_stop + upward_segment_range
+        var float display_risk = display_entry - display_stop
+        var float display_reward = display_target - display_entry
+        var float display_rr = display_risk > 0 ? display_reward / display_risk : 0
+        current_rr_status := "RR: " + str.tostring(display_rr, "#.##") + (display_rr < 1.5 ? " (不足)" : " (足夠)")
+    else
+        current_rr_status := "未監控"
+    table.cell(info_table, 0, 13, "當前RR", text_color=color.black)
+    table.cell(info_table, 1, 13, current_rr_status, text_color=color.black)
+
+// === 繪製當前狀態資訊 ===
+plotchar(bullish_sequence_count, "連續陽燭數", "", location.top, size=size.tiny)
+plotchar(bullish_sequence_active ? 1 : 0, "原生段狀態", "", location.top, size=size.tiny)
+plotchar(upward_trend_active ? 1 : 0, "升段狀態", "", location.top, size=size.tiny)
+
+// === 交易信號視覺化 ===
+// 定義信號條件變數
+var bool entry_signal_bullish = false
+var bool entry_signal_upward = false
+var bool exit_signal = false
+
+entry_signal_bullish := enable_trading and entry_method == "原生段完成" and new_bullish_sequence
+entry_signal_upward := enable_trading and entry_method == "升段確認" and upward_trend_active and not na(last_high) and not na(last_low) and high > last_high and low > last_low
+exit_signal := enable_trading and exit_method == "升段結束" and upward_trend_ended
+
+// 進場信號
+plotshape(entry_signal_bullish, title="原生段進場", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="買入")
+plotshape(entry_signal_upward, title="升段確認進場", style=shape.triangleup, location=location.belowbar, color=color.blue, size=size.small, text="買入")
+
+// 出場信號
+// plotshape(exit_signal, title="升段結束出場", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="賣出")

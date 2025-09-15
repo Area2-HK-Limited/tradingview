@@ -1,3 +1,7 @@
 {
-    "nuxt.isNuxtApp": false
+    "nuxt.isNuxtApp": false,
+    "terminal.integrated.env.osx": {
+        "PATH": "/Users/erictong/.local/bin:${env:PATH}"
+    },
+    "terminal.integrated.inheritEnv": true
 }
