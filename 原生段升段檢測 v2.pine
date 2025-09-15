@@ -220,66 +220,91 @@ if upward_trend_active and not upward_trend_ended
         // 第1步有效性檢查：檢查原生段開始前N支K線的最高價
         if not na(upward_segment_start_bar) and not na(upward_segment_median)
             // 使用已經在全局範圍內即時更新的pre_bullish_high_lookback值
-            // 這個值已經根據最新的lookback_bars參數重新計算過了
+            // 這個值已經根據最新的lookbook_bars參數重新計算過了
             
             // 檢查前N支K線最高價是否高於升段中位價
             step1_invalid := not na(pre_bullish_high_lookback) and pre_bullish_high_lookback > upward_segment_median
-        
-        // 計算中點價位檢查（使用可調整的百分比）
-        upward_end_close := close[1]  // 升段結束前1支K線的收市價
-        var float price_range = upward_end_close - bullish_start_open
-        midpoint_price := bullish_start_open + (price_range * midpoint_percentage / 100.0)  // 可調整的中點價位
-        
-        // 使用全局計算的歷史最高價（現在跟隨lookback_bars參數）
-        historical_high_lookback := historical_high_lookback_current
-        
-        // 檢查歷史最高價是否高於中點價位
-        midpoint_check_passed := not na(historical_high_lookback) and not na(midpoint_price) and historical_high_lookback > midpoint_price
-        
-        // === 第2步初始化 ===
-        // 計算升段幅度（升段結束收市價 - 原生段開始開市價）
-        if not na(bullish_start_open) and not na(upward_segment_end_price)
-            upward_segment_range := upward_segment_end_price - bullish_start_open
-        
-        // 開始第2步監控
-        step2_active := true
-        upward_end_close_price := close[1]  // 升段結束收市價
-        step2_lowest_price := low  // 初始化為當前K線最低價
-        step2_lowest_bar := na
-        step2_take_profit_target := na
-        step2_breakout_confirmed := false
-        
-        // 顯示升段結束標籤和連線
-        if show_upward_trend
-            var string label_text = "第1步"
-            if not na(upward_segment_median) and not na(upward_segment_start_price) and not na(upward_segment_end_price)
-                label_text := "第1步原生段及升段\n結束 (陰燭確認)\n中位價: " + str.tostring(upward_segment_median, "#.##") + 
-                             "\n開始開市: " + str.tostring(upward_segment_start_price, "#.##") +
-                             "\n結束收市: " + str.tostring(upward_segment_end_price, "#.##")
             
-            // 添加第1步有效性檢查結果
-            if not na(pre_bullish_high_lookback) and not na(upward_segment_median)
-                label_text := label_text + "\n原生段前" + str.tostring(lookback_bars) + "K最高: " + str.tostring(pre_bullish_high_lookback, "#.##")
-                if step1_invalid
-                    label_text := label_text + " (無效)"
-                else
-                    label_text := label_text + " (有效)"
-            
-            if midpoint_check_passed
-                label_text := label_text + " ✓"
-            else if not na(midpoint_price) and not na(historical_high_lookback)
-                label_text := label_text + " ✗"
+            // 如果第1步無效（原生段前N支K線最高價大於中位價），立即完結整個流程
+            if step1_invalid
+                // 標記第1步無效結束點
+                label.new(x=bar_index, y=high, text="第1步無效！\n流程完結\n原生段前" + str.tostring(lookback_bars) + "K最高: " + str.tostring(pre_bullish_high_lookback, "#.##") + 
+                         "\n升段中位價: " + str.tostring(upward_segment_median, "#.##") + 
+                         "\n條件：最高價 > 中位價\n結果：流程終止", 
+                          style=label.style_label_lower_right, color=color.red, textcolor=color.white, size=size.normal)
                 
-            label.new(x=bar_index, y=high, text=label_text, style=label.style_label_lower_right, color=label_color_upward, textcolor=color.white, size=size.small)
-            
-            // 畫升段連線
-            if not na(upward_trend_start) and not na(last_candle_index)
-                line.new(x1=upward_trend_start, y1=low[bar_index - upward_trend_start], x2=last_candle_index, y2=last_high, color=line_color_upward, width=2, style=line.style_dashed)
+                // 完整重置所有狀態，完結流程
+                bullish_sequence_active := false
+                upward_trend_active := false
+                bullish_sequence_count := 0
+                upward_trend_ended := false
+                process_active := false  // 流程完結，可以開始新流程
+                step2_active := false
+                step3_active := false
+                
+                // 調試標籤：確認流程完結
+                label.new(x=bar_index, y=high * 0.995, text="流程完結(第1步無效)\n可開始新流程", 
+                          style=label.style_label_lower_left, color=color.gray, textcolor=color.white, size=size.tiny)
+                
+                // 跳出後續處理，直接結束此次流程
         
-        // 重置狀態，準備尋找下一個原生段
-        bullish_sequence_active := false
-        upward_trend_active := false
-        bullish_sequence_count := 0
+        // 只有在第1步有效時，才繼續進行後續檢查和第2步準備
+        if not step1_invalid
+            // 計算中點價位檢查（使用可調整的百分比）
+            upward_end_close := close[1]  // 升段結束前1支K線的收市價
+            var float price_range = upward_end_close - bullish_start_open
+            midpoint_price := bullish_start_open + (price_range * midpoint_percentage / 100.0)  // 可調整的中點價位
+            
+            // 使用全局計算的歷史最高價（現在跟隨lookback_bars參數）
+            historical_high_lookback := historical_high_lookback_current
+            
+            // 檢查歷史最高價是否高於中點價位
+            midpoint_check_passed := not na(historical_high_lookback) and not na(midpoint_price) and historical_high_lookback > midpoint_price
+            
+            // === 第2步初始化 ===（只有在第1步有效時才初始化第2步）
+            // 計算升段幅度（升段結束收市價 - 原生段開始開市價）
+            if not na(bullish_start_open) and not na(upward_segment_end_price)
+                upward_segment_range := upward_segment_end_price - bullish_start_open
+            
+            // 開始第2步監控
+            step2_active := true
+            upward_end_close_price := close[1]  // 升段結束收市價
+            step2_lowest_price := low  // 初始化為當前K線最低價
+            step2_lowest_bar := na
+            step2_take_profit_target := na
+            step2_breakout_confirmed := false
+            
+            // 顯示升段結束標籤和連線（只有在第1步有效時才顯示）
+            if show_upward_trend
+                var string label_text = "第1步"
+                if not na(upward_segment_median) and not na(upward_segment_start_price) and not na(upward_segment_end_price)
+                    label_text := "第1步原生段及升段\n結束 (陰燭確認)\n中位價: " + str.tostring(upward_segment_median, "#.##") + 
+                                 "\n開始開市: " + str.tostring(upward_segment_start_price, "#.##") +
+                                 "\n結束收市: " + str.tostring(upward_segment_end_price, "#.##")
+                
+                // 添加第1步有效性檢查結果
+                if not na(pre_bullish_high_lookback) and not na(upward_segment_median)
+                    label_text := label_text + "\n原生段前" + str.tostring(lookback_bars) + "K最高: " + str.tostring(pre_bullish_high_lookback, "#.##")
+                    if step1_invalid
+                        label_text := label_text + " (無效)"
+                    else
+                        label_text := label_text + " (有效)"
+                
+                if midpoint_check_passed
+                    label_text := label_text + " ✓"
+                else if not na(midpoint_price) and not na(historical_high_lookback)
+                    label_text := label_text + " ✗"
+                    
+                label.new(x=bar_index, y=high, text=label_text, style=label.style_label_lower_right, color=label_color_upward, textcolor=color.white, size=size.small)
+                
+                // 畫升段連線
+                if not na(upward_trend_start) and not na(last_candle_index)
+                    line.new(x1=upward_trend_start, y1=low[bar_index - upward_trend_start], x2=last_candle_index, y2=last_high, color=line_color_upward, width=2, style=line.style_dashed)
+            
+            // 重置狀態，準備尋找下一個原生段（只有在第1步有效時才重置）
+            bullish_sequence_active := false
+            upward_trend_active := false
+            bullish_sequence_count := 0
 
 
 
@@ -290,8 +315,8 @@ if bullish_sequence_active and not upward_trend_active and not is_bullish_candle
     bullish_sequence_count := 0
 
 // === 第2步監控邏輯 ===
-// 監控升段結束後的價格突破（只有在升段真正結束後才能進行）
-if step2_active and upward_trend_ended and not upward_trend_active
+// 監控升段結束後的價格突破（只有在升段真正結束後且第1步有效時才能進行）
+if step2_active and upward_trend_ended and not upward_trend_active and not step1_invalid
     // 更新第2步期間的最低價
     if low < step2_lowest_price
         step2_lowest_price := low
