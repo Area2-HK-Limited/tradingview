@@ -1,5 +1,5 @@
 //@version=5
-strategy("ET-Up Trend", overlay=true, max_labels_count=450, max_lines_count=450, default_qty_type=strategy.percent_of_equity, default_qty_value=10, initial_capital=100000, currency=currency.USD)
+strategy("ET-Up Trend", overlay=true, max_labels_count=500, max_lines_count=500, default_qty_type=strategy.percent_of_equity, default_qty_value=10, initial_capital=100000, currency=currency.USD)
 
 // === 設定參數 ===
 // 交易設定
