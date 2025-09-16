@@ -14,6 +14,7 @@ end_date = input.time(timestamp("2030-12-31 23:59:59"), "結束日期", group="�
 // 檢查參數設定
 midpoint_percentage = input.float(50.0, "中點價位百分比 (%)", minval=0.0, maxval=100.0, step=0.1, group="檢查參數")
 lookback_bars = input.int(50, "歷史K線數量", minval=1, maxval=1000, step=1, group="檢查參數")
+rr_ratio_threshold = input.float(1.5, "最小風險回報比率 (RR)", minval=0.1, maxval=10.0, step=0.1, group="檢查參數")
 
 // 顯示設定
 show_bullish_sequence = input.bool(true, "顯示原生段", group="顯示設定")
@@ -363,8 +364,8 @@ if step2_active and upward_trend_ended and not upward_trend_active
     float current_reward = current_take_profit - current_entry_price  // 回報金額
     float current_rr_ratio = current_risk > 0 ? current_reward / current_risk : 0  // 當前RR比率
     
-    // 如果RR比率低於1.5，結束第2步監控
-    if current_rr_ratio < 1.5
+    // 如果RR比率低於設定的閾值，結束第2步監控
+    if current_rr_ratio < rr_ratio_threshold
         // 標記RR不足結束點
         label.new(x=bar_index, y=low, text="第2步結束\nRR不足: " + str.tostring(current_rr_ratio, "#.##") + "\n買入點: " + str.tostring(current_entry_price, "#.##") + 
                  "\n最低價: " + str.tostring(current_stop_loss, "#.##") + 
@@ -398,8 +399,8 @@ if step2_active and upward_trend_ended and not upward_trend_active
         float stop_loss_rr = step2_lowest_price  // 止蝕位：最低價
         float risk_amount = entry_price_rr - stop_loss_rr  // 風險金額
         
-        // 計算達到1.5 RR所需的獲利目標
-        float required_reward = risk_amount * 1.5  // 所需回報 = 風險 × 1.5
+        // 計算達到設定RR所需的獲利目標
+        float required_reward = risk_amount * rr_ratio_threshold  // 所需回報 = 風險 × RR閾值
         float take_profit_rr = entry_price_rr + required_reward  // 獲利目標 = 買入點 + 所需回報
         
         // 更新第2步獲利目標
@@ -409,7 +410,7 @@ if step2_active and upward_trend_ended and not upward_trend_active
         float reward_amount = take_profit_rr - entry_price_rr  // 實際回報金額
         float risk_reward_ratio = risk_amount > 0 ? reward_amount / risk_amount : 0  // RR比率
         
-        // 標記觸及升段最高價點（獲利目標已按1.5 RR計算）
+        // 標記觸及升段最高價點（獲利目標已按設定RR計算）
         label.new(x=bar_index, y=high, text="第2步觸及升段最高價\n原生段最低: " + str.tostring(bullish_start_open, "#.##") + 
                  "\n升段最高: " + str.tostring(upward_segment_end_price, "#.##") + 
                  "\n升段幅度: " + str.tostring(upward_segment_range, "#.##") + 
@@ -678,7 +679,7 @@ if barstate.islast
         float display_risk = display_entry - display_stop
         float display_reward = display_target - display_entry
         float display_rr = display_risk > 0 ? display_reward / display_risk : 0
-        current_rr_status := "RR: " + str.tostring(display_rr, "#.##") + (display_rr < 1.5 ? " (不足)" : " (足夠)")
+        current_rr_status := "RR: " + str.tostring(display_rr, "#.##") + (display_rr < rr_ratio_threshold ? " (不足)" : " (足夠)")
     else
         current_rr_status := "未監控"
     table.cell(info_table, 0, 15, "當前RR", text_color=color.black)
