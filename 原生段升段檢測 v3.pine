@@ -1,5 +1,5 @@
 //@version=5
-strategy("ET-Up Trend", overlay=true, max_labels_count=500, max_lines_count=500, default_qty_type=strategy.percent_of_equity, default_qty_value=100, initial_capital=100000, currency=currency.USD, commission_value = 0.05, process_orders_on_close = true)
+strategy("ET-Up Trend", overlay=true, max_labels_count=500, max_lines_count=500, default_qty_type=strategy.percent_of_equity, default_qty_value=100, initial_capital=100000, currency=currency.USD, commission_value = 0.05)
 
 // === 設定參數 ===
 // 交易設定
@@ -210,6 +210,10 @@ if upward_trend_active and not upward_trend_ended
     current_high := high
     current_low := low
     
+    // 持續更新升段期間的最高價
+    if current_high > upward_segment_highest
+        upward_segment_highest := current_high
+    
     // 檢查是否符合升段條件：高點高過前一支高點，低點高過前一支低點
     if current_high > last_high and current_low > last_low
         // 符合升段條件，更新參考點
@@ -351,8 +355,8 @@ if step2_active and upward_trend_ended and not upward_trend_active
     if low < step2_lowest_price
         step2_lowest_price := low
     
-    // 每支K線完結時檢查RR比率（使用升段收市價作為買入點）
-    float current_entry_price = upward_end_close_price  // 買入點：升段收市價
+    // 每支K線完結時檢查RR比率（使用升段最高價作為買入點）
+    float current_entry_price = upward_segment_highest  // 買入點：升段最高價
     float current_stop_loss = step2_lowest_price  // 止蝕位：期間最低價
     float current_take_profit = current_stop_loss + upward_segment_range  // 止賺位：最低價 + 升段幅度
     float current_risk = current_entry_price - current_stop_loss  // 風險金額
@@ -387,10 +391,10 @@ if step2_active and upward_trend_ended and not upward_trend_active
         label.new(x=bar_index, y=low * 0.995, text="流程完結(RR不足)\n可開始新流程", 
                   style=label.style_label_upper_left, color=color.gray, textcolor=color.white, size=size.tiny)
     
-    // 如果RR比率足夠，檢查是否突破升段結束價格（使用收市價判斷）
-    else if close > upward_end_close_price
+    // 如果RR比率足夠，檢查是否觸及升段最高價（使用最高價判斷）
+    else if high >= upward_segment_highest
         // 計算風險回報比率 (RR) - 先計算風險和回報
-        float entry_price_rr = close  // 買入點：突破K線的收市價
+        float entry_price_rr = upward_segment_highest  // 買入點：升段的最高價
         float stop_loss_rr = step2_lowest_price  // 止蝕位：最低價
         float risk_amount = entry_price_rr - stop_loss_rr  // 風險金額
         
@@ -405,13 +409,13 @@ if step2_active and upward_trend_ended and not upward_trend_active
         float reward_amount = take_profit_rr - entry_price_rr  // 實際回報金額
         float risk_reward_ratio = risk_amount > 0 ? reward_amount / risk_amount : 0  // RR比率
         
-        // 標記突破點（獲利目標已按1.5 RR計算）
-        label.new(x=bar_index, y=high, text="第2步突破\n原生段最低: " + str.tostring(bullish_start_open, "#.##") + 
+        // 標記觸及升段最高價點（獲利目標已按1.5 RR計算）
+        label.new(x=bar_index, y=high, text="第2步觸及升段最高價\n原生段最低: " + str.tostring(bullish_start_open, "#.##") + 
                  "\n升段最高: " + str.tostring(upward_segment_end_price, "#.##") + 
                  "\n升段幅度: " + str.tostring(upward_segment_range, "#.##") + 
                  "\n最低價: " + str.tostring(step2_lowest_price, "#.##") + 
                  "\n獲利目標: " + str.tostring(step2_take_profit_target, "#.##") + 
-                 "\n買入點: " + str.tostring(entry_price_rr, "#.##") + " (突破收市)" + 
+                 "\n買入點: " + str.tostring(entry_price_rr, "#.##") + " (升段最高)" + 
                  "\n止蝕位: " + str.tostring(stop_loss_rr, "#.##") + 
                  "\n風險: " + str.tostring(risk_amount, "#.##") + 
                  "\n回報: " + str.tostring(reward_amount, "#.##") + 
@@ -422,9 +426,9 @@ if step2_active and upward_trend_ended and not upward_trend_active
         line.new(x1=bar_index, y1=step2_lowest_price, x2=bar_index, y2=step2_take_profit_target, 
                  color=color.purple, width=2, style=line.style_solid)
         
-        // 交易邏輯：第2步突破時進場
+        // 交易邏輯：第2步觸及升段最高價時進場
         if enable_trading and not position_open and in_date_range()
-            strategy.entry("多頭", strategy.long, comment="第2步突破進場")
+            strategy.entry("多頭", strategy.long, comment="第2步觸及升段最高價進場")
             position_open := true
             entry_price := entry_price_rr
             entry_signal := "第2步突破"
